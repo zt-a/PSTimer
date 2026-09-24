@@ -26,6 +26,7 @@ class FakeClient:
 async def test_subscriber_lifecycle(db):
     sub = await service.subscribe(db, 123, username="admin", first_name="A")
     assert sub.is_active
+    assert sub.notify_all is True  # new users get all stations by default
     assert len(await service.list_active(db)) == 1
 
     # idempotent re-subscribe
@@ -36,6 +37,40 @@ async def test_subscriber_lifecycle(db):
 
     assert await service.unsubscribe(db, 123) is True
     assert await service.list_active(db) == []
+
+
+@pytest.mark.asyncio
+async def test_station_subscriptions(db):
+    await service.subscribe(db, 10)
+    # explicit station selection turns "all" off
+    await service.set_notify_all(db, 10, False)
+    assert await service.toggle_station(db, 10, 1) is True
+    assert await service.toggle_station(db, 10, 2) is True
+    assert await service.subscribed_station_ids(db, 10) == {1, 2}
+
+    # toggle removes
+    assert await service.toggle_station(db, 10, 1) is False
+    assert await service.subscribed_station_ids(db, 10) == {2}
+
+    # clear_all disables everything
+    await service.clear_all(db, 10)
+    assert await service.subscribed_station_ids(db, 10) == set()
+    sub = await service.get(db, 10)
+    assert sub.notify_all is False
+
+
+@pytest.mark.asyncio
+async def test_subscribers_for_station_scoping(db):
+    all_sub = await service.subscribe(db, 1)  # notify_all=True
+    await service.subscribe(db, 2)
+    await service.set_notify_all(db, 2, False)
+    await service.toggle_station(db, 2, 5)  # only station 5
+
+    station_5 = {s.chat_id for s in await service.subscribers_for_station(db, 5)}
+    station_9 = {s.chat_id for s in await service.subscribers_for_station(db, 9)}
+    assert station_5 == {1, 2}
+    assert station_9 == {1}
+    assert all_sub.chat_id == 1
 
 
 @pytest.mark.asyncio
@@ -100,12 +135,33 @@ def test_stations_message_formatting():
     assert "занято 1 · свободно 1" in msg
 
 
+def test_stations_keyboard_reflects_subscriptions():
+    stations = [_station(None, None), _station(None, None)]
+    stations[0].id = 1
+    stations[0].name = "PS #01"
+    stations[1].id = 2
+    stations[1].name = "PS #02"
+
+    kb = fmt.stations_keyboard(stations, notify_all=False, subscribed_ids={1})
+    buttons = {b["callback_data"]: b["text"] for row in kb["inline_keyboard"] for b in row}
+    assert buttons["tog:1"].startswith("✅")
+    assert buttons["tog:2"].startswith("➕")
+    assert buttons["all:on"].startswith("⬜")
+
+    kb_all = fmt.stations_keyboard(stations, notify_all=True, subscribed_ids=set())
+    buttons_all = {
+        b["callback_data"]: b["text"] for row in kb_all["inline_keyboard"] for b in row
+    }
+    assert buttons_all["tog:1"].startswith("✅")
+    assert buttons_all["all:off"].startswith("✅")
+
+
 @pytest.mark.asyncio
 async def test_runner_transitions_and_warnings():
     runner = TelegramRunner("test-token")
     sent: list[str] = []
 
-    async def fake_broadcast(text: str) -> None:
+    async def fake_broadcast(text: str, station_id=None) -> None:
         sent.append(text)
 
     runner._broadcast = fake_broadcast  # type: ignore[assignment]
@@ -189,3 +245,44 @@ async def test_runner_transitions_and_warnings():
     sent.clear()
     await runner._process(_dash([_station(None, None)]))
     assert any("завершена" in s for s in sent)
+
+
+def test_bulk_event_messages():
+    assert "паузу" in fmt.event_pause_all(3)
+    assert "3" in fmt.event_pause_all(3)
+    assert "возобновлены" in fmt.event_resume_all(2)
+    assert "2" in fmt.event_resume_all(2)
+    assert "15" in fmt.event_extend_all(4, 15)
+    assert "4" in fmt.event_extend_all(4, 15)
+
+
+@pytest.mark.asyncio
+async def test_notify_bulk_broadcasts_to_all_and_resyncs():
+    runner = TelegramRunner("test-token")
+    sent: list[tuple[str, object]] = []
+
+    async def fake_broadcast(text: str, station_id=None) -> None:
+        sent.append((text, station_id))
+
+    snapshot = _dash(
+        [
+            _station(
+                5,
+                "PAUSED",
+                session_type="FIXED",
+                started_at=datetime.now(timezone.utc),
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+            )
+        ]
+    )
+
+    async def fake_snapshot():
+        return snapshot
+
+    runner.broadcast = fake_broadcast  # type: ignore[assignment]
+    runner._snapshot = fake_snapshot  # type: ignore[assignment]
+
+    await runner.notify_bulk("все на паузе")
+    assert sent == [("все на паузе", None)]
+    # baseline resynced so the monitor won't re-send a per-station notice
+    assert runner._prev[1].status.value == "PAUSED"

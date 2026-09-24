@@ -1,10 +1,12 @@
-"""Telegram bot runner: command handling + time-based event notifications.
+"""Telegram bot runner: command/keyboard handling + event notifications.
 
 Two concurrent tasks:
-  * long-poll ``getUpdates`` to handle /start, /stop, /stations, /help;
+  * long-poll ``getUpdates`` to handle commands and inline-keyboard buttons
+    (subscription menu: all stations or a chosen subset);
   * a monitor that periodically snapshots the dashboard and turns state
     transitions into notifications (start, pause, resume, extend, 5/3/1-min
-    warnings, expiry, completion).
+    warnings, expiry, completion), delivered only to subscribers of the
+    relevant station.
 """
 
 from __future__ import annotations
@@ -102,6 +104,9 @@ class TelegramRunner:
                     logger.exception("failed to handle update %s", update.get("update_id"))
 
     async def _handle_update(self, update: dict) -> None:
+        if update.get("callback_query"):
+            await self._handle_callback(update["callback_query"])
+            return
         message = update.get("message")
         if not message:
             return
@@ -111,7 +116,10 @@ class TelegramRunner:
             return
         sender = message.get("from") or {}
         text = (message.get("text") or "").strip()
+
         if not text.startswith("/"):
+            if text:
+                await self._show_main(chat_id, None)
             return
 
         command = text.split()[0].split("@")[0].lower()
@@ -124,26 +132,139 @@ class TelegramRunner:
                     username=sender.get("username"),
                     first_name=sender.get("first_name"),
                 )
-            snapshot = await self._snapshot()
-            await self._safe_send(chat_id, fmt.help_message())
-            await self._safe_send(
-                chat_id, fmt.stations_message(snapshot, datetime.now(timezone.utc))
-            )
+            await self._show_main(chat_id, None)
         elif command == "/stop":
             async with AsyncSessionLocal() as db:
-                await service.unsubscribe(db, chat_id)
-            await self._safe_send(chat_id, "🔕 Уведомления отключены. /start — включить снова.")
-        elif command in ("/stations", "/status"):
-            snapshot = await self._snapshot()
+                await service.clear_all(db, chat_id)
             await self._safe_send(
-                chat_id, fmt.stations_message(snapshot, datetime.now(timezone.utc))
+                chat_id, fmt.stop_message(), fmt.main_menu_keyboard()
             )
+        elif command in ("/stations", "/status"):
+            await self._show_stations(chat_id, None)
+        elif command in ("/subs", "/subscriptions"):
+            await self._show_subs(chat_id, None)
+        elif command == "/menu":
+            await self._show_main(chat_id, None)
         else:
-            await self._safe_send(chat_id, fmt.help_message())
+            await self._safe_send(
+                chat_id, fmt.help_message(), fmt.main_menu_keyboard()
+            )
 
-    async def _safe_send(self, chat_id: int, text: str) -> None:
+    # ── callback buttons ─────────────────────────────────────────────────
+    async def _handle_callback(self, cq: dict) -> None:
+        data = cq.get("data") or ""
+        message = cq.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        message_id = message.get("message_id")
+        sender = cq.get("from") or {}
+        if chat_id is None:
+            return
+
         try:
-            await self.client.send_message(chat_id, text)
+            await self.client.answer_callback_query(cq.get("id"))
+        except TelegramError:
+            pass
+
+        async with AsyncSessionLocal() as db:
+            if await service.get(db, chat_id) is None:
+                await service.subscribe(
+                    db,
+                    chat_id,
+                    username=sender.get("username"),
+                    first_name=sender.get("first_name"),
+                )
+
+        if data == "menu:main":
+            await self._show_main(chat_id, message_id)
+        elif data == "menu:stations":
+            await self._show_stations(chat_id, message_id)
+        elif data == "menu:subs":
+            await self._show_subs(chat_id, message_id)
+        elif data == "menu:help":
+            await self._edit(
+                chat_id, message_id, fmt.help_message(), fmt.back_keyboard()
+            )
+        elif data.startswith("tog:"):
+            try:
+                station_id = int(data[4:])
+            except ValueError:
+                return
+            await self._toggle_station(chat_id, station_id)
+            await self._show_stations(chat_id, message_id)
+        elif data == "all:on":
+            async with AsyncSessionLocal() as db:
+                await service.set_notify_all(db, chat_id, True)
+                await service.clear_stations(db, chat_id)
+            await self._show_stations(chat_id, message_id)
+        elif data == "all:off":
+            async with AsyncSessionLocal() as db:
+                await service.clear_all(db, chat_id)
+            await self._show_subs(chat_id, message_id)
+
+    async def _toggle_station(self, chat_id: int, station_id: int) -> None:
+        """Toggle one station. If 'all' was on, switch to a custom selection
+        that includes every station except the tapped one (i.e. mute it)."""
+        snapshot = await self._snapshot()
+        async with AsyncSessionLocal() as db:
+            sub = await service.get(db, chat_id)
+            if sub is None:
+                return
+            if sub.notify_all:
+                await service.set_notify_all(db, chat_id, False)
+                await service.clear_stations(db, chat_id)
+                for st in snapshot.stations:
+                    if st.id != station_id:
+                        await service.toggle_station(db, chat_id, st.id)
+            else:
+                await service.toggle_station(db, chat_id, station_id)
+
+    async def _show_main(self, chat_id: int, message_id: Optional[int]) -> None:
+        async with AsyncSessionLocal() as db:
+            sub = await service.get(db, chat_id)
+        text = f"{fmt.menu_message()}\n\n{fmt.subscriptions_text(sub)}"
+        await self._edit(chat_id, message_id, text, fmt.main_menu_keyboard())
+
+    async def _show_subs(self, chat_id: int, message_id: Optional[int]) -> None:
+        async with AsyncSessionLocal() as db:
+            sub = await service.get(db, chat_id)
+        text = fmt.subscriptions_text(sub)
+        await self._edit(chat_id, message_id, text, fmt.subs_keyboard())
+
+    async def _show_stations(self, chat_id: int, message_id: Optional[int]) -> None:
+        snapshot = await self._snapshot()
+        async with AsyncSessionLocal() as db:
+            sub = await service.get(db, chat_id)
+            notify_all = bool(sub and sub.notify_all)
+            ids = await service.subscribed_station_ids(db, chat_id)
+        text = fmt.stations_message(snapshot, datetime.now(timezone.utc))
+        keyboard = fmt.stations_keyboard(snapshot.stations, notify_all, ids)
+        await self._edit(chat_id, message_id, text, keyboard)
+
+    async def _edit(
+        self,
+        chat_id: int,
+        message_id: Optional[int],
+        text: str,
+        keyboard: Optional[dict],
+    ) -> None:
+        if message_id is None:
+            await self._safe_send(chat_id, text, keyboard)
+            return
+        try:
+            await self.client.edit_message_text(
+                chat_id, message_id, text, reply_markup=keyboard
+            )
+        except TelegramError as exc:
+            if "not modified" in exc.description.lower():
+                return
+            await self._safe_send(chat_id, text, keyboard)
+
+    async def _safe_send(
+        self, chat_id: int, text: str, keyboard: Optional[dict] = None
+    ) -> None:
+        try:
+            await self.client.send_message(chat_id, text, reply_markup=keyboard)
         except TelegramError as exc:
             if exc.is_blocked:
                 async with AsyncSessionLocal() as db:
@@ -151,9 +272,23 @@ class TelegramRunner:
             else:
                 logger.warning("send to %s failed: %s", chat_id, exc)
 
-    async def _broadcast(self, text: str) -> None:
+    async def broadcast(self, text: str, station_id: Optional[int] = None) -> None:
+        """Send a message to matching active subscribers (None = everyone)."""
         async with AsyncSessionLocal() as db:
-            await service.broadcast(self.client, db, text)
+            await service.broadcast(self.client, db, text, station_id=station_id)
+
+    async def _broadcast(self, text: str, station_id: Optional[int] = None) -> None:
+        await self.broadcast(text, station_id)
+
+    async def notify_bulk(self, text: str) -> None:
+        """Broadcast a global (all-stations) event and resync the monitor
+        baseline so per-station transition notices aren't duplicated."""
+        await self.broadcast(text)
+        try:
+            snapshot = await self._snapshot()
+            self._baseline(snapshot)
+        except Exception:  # noqa: BLE001
+            logger.exception("telegram bulk resync failed")
 
     # ── event monitor ────────────────────────────────────────────────────
     async def _monitor_events(self) -> None:
@@ -203,14 +338,16 @@ class TelegramRunner:
         if p_sid != c_sid:
             if c_sid and not p_sid:
                 await self._broadcast(
-                    fmt.event_start(cur, currency, self._purchased_minutes(cur))
+                    fmt.event_start(cur, currency, self._purchased_minutes(cur)),
+                    cur.id,
                 )
             elif p_sid and not c_sid:
-                await self._broadcast(fmt.event_stop(prev, currency))
+                await self._broadcast(fmt.event_stop(prev, currency), prev.id)
             else:  # occupied by a different session
-                await self._broadcast(fmt.event_stop(prev, currency))
+                await self._broadcast(fmt.event_stop(prev, currency), prev.id)
                 await self._broadcast(
-                    fmt.event_start(cur, currency, self._purchased_minutes(cur))
+                    fmt.event_start(cur, currency, self._purchased_minutes(cur)),
+                    cur.id,
                 )
             return
 
@@ -220,14 +357,14 @@ class TelegramRunner:
             return
 
         if cs == "EXPIRED":
-            await self._broadcast(fmt.event_expired(cur, currency))
+            await self._broadcast(fmt.event_expired(cur, currency), cur.id)
         elif cs == "PAUSED":
-            await self._broadcast(fmt.event_pause(cur))
+            await self._broadcast(fmt.event_pause(cur), cur.id)
         elif cs == "ACTIVE" and ps in ("PAUSED", "EXPIRED"):
             # resume or post-extend revival -> re-arm warnings
             self._warned.pop(c_sid or -1, None)
             self._last_rem.pop(c_sid or -1, None)
-            await self._broadcast(fmt.event_resume(cur))
+            await self._broadcast(fmt.event_resume(cur), cur.id)
 
     async def _check_warnings(self, st: StationState, currency: str) -> None:
         if (
@@ -257,7 +394,7 @@ class TelegramRunner:
         if bucket in warned:
             return
         warned.add(bucket)
-        await self._broadcast(fmt.event_warning(st, bucket, currency))
+        await self._broadcast(fmt.event_warning(st, bucket, currency), st.id)
 
     @staticmethod
     def _purchased_minutes(st: StationState) -> Optional[int]:

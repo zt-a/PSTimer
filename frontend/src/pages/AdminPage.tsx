@@ -4,16 +4,19 @@ import { useQuery } from '@tanstack/react-query'
 import {
   BarChart3,
   CalendarDays,
+  Clock,
   Gamepad2,
   History,
   LogOut,
   Monitor,
+  Pause,
   Play,
   Plus,
   Settings as SettingsIcon,
   Trash2,
   TrendingUp,
   Users,
+  Zap,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
@@ -30,6 +33,7 @@ import { ExtendModal } from '@/features/admin/ExtendModal'
 import { StopModal } from '@/features/admin/StopModal'
 import { TariffEditorModal } from '@/features/admin/TariffEditorModal'
 import { StationEditorModal } from '@/features/admin/StationEditorModal'
+import { BulkExtendModal } from '@/features/admin/BulkExtendModal'
 import { SettingsPanel } from '@/features/admin/SettingsPanel'
 import { StationRow } from '@/features/admin/StationRow'
 
@@ -75,6 +79,8 @@ export default function AdminPage() {
     open: false,
     station: null,
   })
+  const [bulkExtendOpen, setBulkExtendOpen] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
 
   const [toasts, setToasts] = useState<ToastData[]>([])
   const notify = useCallback((message: string, type: 'success' | 'error' = 'success') => {
@@ -151,6 +157,32 @@ export default function AdminPage() {
       stationsQuery.refetch()
     } catch (e: any) {
       notify(e.message, 'error')
+    }
+  }
+
+  const handlePauseAll = async () => {
+    setBulkBusy(true)
+    try {
+      const r = await api.pauseAllSessions()
+      notify(r.affected > 0 ? `Поставлено на паузу: ${r.affected}` : 'Нет активных сессий')
+      invalidate()
+    } catch (e: any) {
+      notify(e.message, 'error')
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
+  const handleResumeAll = async () => {
+    setBulkBusy(true)
+    try {
+      const r = await api.resumeAllSessions()
+      notify(r.affected > 0 ? `Возобновлено: ${r.affected}` : 'Нет сессий на паузе')
+      invalidate()
+    } catch (e: any) {
+      notify(e.message, 'error')
+    } finally {
+      setBulkBusy(false)
     }
   }
 
@@ -273,6 +305,39 @@ export default function AdminPage() {
                 ⚠ {stats.expired} станц. с истекшим временем — завершите сессии
               </div>
             )}
+
+            {/* power-outage quick actions */}
+            <Card className="p-4 sm:p-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2 text-sm text-white/60">
+                  <Zap className="h-4 w-4 shrink-0 text-amber-300" />
+                  <span>Отключение света — быстрые действия для всех станций</span>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
+                  <Button
+                    variant="secondary"
+                    onClick={handlePauseAll}
+                    disabled={bulkBusy}
+                  >
+                    <Pause className="h-4 w-4" /> Остановить все
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={handleResumeAll}
+                    disabled={bulkBusy}
+                  >
+                    <Play className="h-4 w-4" /> Возобновить все
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setBulkExtendOpen(true)}
+                    disabled={bulkBusy}
+                  >
+                    <Clock className="h-4 w-4" /> Продлить всем
+                  </Button>
+                </div>
+              </div>
+            </Card>
 
             {/* stations list */}
             <div className="space-y-3">
@@ -471,6 +536,14 @@ export default function AdminPage() {
         onDone={(m) => {
           notify(m)
           stationsQuery.refetch()
+        }}
+      />
+      <BulkExtendModal
+        open={bulkExtendOpen}
+        onClose={() => setBulkExtendOpen(false)}
+        onDone={(m) => {
+          notify(m)
+          invalidate()
         }}
       />
 

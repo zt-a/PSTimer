@@ -1,5 +1,6 @@
 from app.schemas.schemas import (
     AdminOut,
+    BulkResult,
     DashboardResponse,
     LoginRequest,
     SettingsOut,
@@ -18,6 +19,7 @@ from app.schemas.schemas import (
 
 __all__ = [
     "AdminOut",
+    "BulkResult",
     "DashboardResponse",
     "LoginRequest",
     "SettingsOut",

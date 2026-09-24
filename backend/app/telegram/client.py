@@ -82,7 +82,7 @@ class TelegramClient:
     ) -> list[dict]:
         params: dict[str, Any] = {
             "timeout": timeout,
-            "allowed_updates": ["message"],
+            "allowed_updates": ["message", "callback_query"],
         }
         if offset is not None:
             params["offset"] = offset
@@ -94,12 +94,42 @@ class TelegramClient:
         text: str,
         parse_mode: str = "HTML",
         disable_notification: bool = False,
+        reply_markup: Optional[dict] = None,
     ) -> dict:
-        return await self._call(
-            "sendMessage",
-            chat_id=chat_id,
-            text=text,
-            parse_mode=parse_mode,
-            disable_web_page_preview=True,
-            disable_notification=disable_notification,
-        )
+        params: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": True,
+            "disable_notification": disable_notification,
+        }
+        if reply_markup is not None:
+            params["reply_markup"] = reply_markup
+        return await self._call("sendMessage", **params)
+
+    async def edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        parse_mode: str = "HTML",
+        reply_markup: Optional[dict] = None,
+    ) -> Any:
+        params: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": True,
+        }
+        if reply_markup is not None:
+            params["reply_markup"] = reply_markup
+        return await self._call("editMessageText", **params)
+
+    async def answer_callback_query(
+        self, callback_query_id: str, text: Optional[str] = None
+    ) -> Any:
+        params: dict[str, Any] = {"callback_query_id": callback_query_id}
+        if text:
+            params["text"] = text
+        return await self._call("answerCallbackQuery", **params)

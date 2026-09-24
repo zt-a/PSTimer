@@ -135,6 +135,39 @@ async def extend_session(
     return session
 
 
+async def extend_session_free(
+    db: AsyncSession, session: Session, duration_minutes: int
+) -> Session:
+    """Add free (unbilled) minutes to a FIXED session.
+
+    The timer is pushed forward and the same span is recorded in
+    ``comp_seconds`` so ``fixed_session_price`` stays unchanged. Used to
+    compensate clients for outages. Revives an EXPIRED session.
+    """
+    if session.type != SessionType.FIXED:
+        raise ValueError("Only fixed sessions can be extended")
+    if session.status == SessionStatus.COMPLETED:
+        raise ValueError("Session already completed")
+    if duration_minutes <= 0:
+        raise ValueError("duration_minutes must be > 0")
+
+    seconds = duration_minutes * 60
+    base = as_aware(session.expires_at) or utcnow()
+    session.expires_at = base + timedelta(seconds=seconds)
+    session.comp_seconds = (session.comp_seconds or 0) + seconds
+
+    if session.status == SessionStatus.EXPIRED:
+        session.status = SessionStatus.ACTIVE
+
+    # a new final time means warnings must be re-armed
+    session.warning_5_sent = False
+    session.warning_3_sent = False
+    session.warning_1_sent = False
+    session.expired_sent = False
+    await db.flush()
+    return session
+
+
 async def pause_session(db: AsyncSession, session: Session) -> Session:
     """Pause an ACTIVE/OPEN session."""
     if session.status not in (SessionStatus.ACTIVE, SessionStatus.OPEN):
@@ -193,12 +226,19 @@ async def check_and_expire_fixed_sessions(db: AsyncSession) -> list[Session]:
 def fixed_session_price(
     session: Session,
 ) -> Decimal:
-    """The fixed price for a FIXED session (from purchase duration)."""
+    """The fixed price for a FIXED session (from purchased duration).
+
+    Paused and free/compensated time shift ``expires_at`` but were never
+    purchased, so they are excluded from the billable minutes.
+    """
     if session.type != SessionType.FIXED:
         raise ValueError("Not a fixed session")
     if session.expires_at is None:
         raise ValueError("Fixed session missing expires_at")
-    minutes = int((as_aware(session.expires_at) - as_aware(session.started_at)).total_seconds() // 60)
+    span = (as_aware(session.expires_at) - as_aware(session.started_at)).total_seconds()
+    span -= session.total_paused_seconds or 0
+    span -= session.comp_seconds or 0
+    minutes = int(max(span, 0) // 60)
     return calculate_fixed_price(minutes, session.price_snapshot)
 
 
@@ -269,3 +309,68 @@ async def list_active(db: AsyncSession) -> list[Session]:
         .order_by(Session.started_at.desc())
     )
     return list((await db.scalars(stmt)).all())
+
+
+# ── bulk actions (power-outage helpers) ──────────────────────────────────────
+async def pause_all_sessions(db: AsyncSession) -> list[Session]:
+    """Pause every running (ACTIVE/OPEN) session. Returns the affected rows."""
+    rows = (
+        await db.scalars(
+            select(Session).where(
+                Session.status.in_([SessionStatus.ACTIVE, SessionStatus.OPEN])
+            )
+        )
+    ).all()
+    affected: list[Session] = []
+    for session in rows:
+        try:
+            affected.append(await pause_session(db, session))
+        except ValueError:
+            continue
+    return affected
+
+
+async def resume_all_sessions(db: AsyncSession) -> list[Session]:
+    """Resume every PAUSED session. Returns the affected rows."""
+    rows = (
+        await db.scalars(
+            select(Session).where(Session.status == SessionStatus.PAUSED)
+        )
+    ).all()
+    affected: list[Session] = []
+    for session in rows:
+        try:
+            affected.append(await resume_session(db, session))
+        except ValueError:
+            continue
+    return affected
+
+
+async def extend_all_free(db: AsyncSession, duration_minutes: int) -> list[Session]:
+    """Add free (unbilled) minutes to every FIXED session still occupying a
+    station. OPEN sessions are ignored. Returns the affected rows."""
+    if duration_minutes <= 0:
+        raise ValueError("duration_minutes must be > 0")
+    rows = (
+        await db.scalars(
+            select(Session).where(
+                Session.type == SessionType.FIXED,
+                Session.status.in_(
+                    [
+                        SessionStatus.ACTIVE,
+                        SessionStatus.PAUSED,
+                        SessionStatus.EXPIRED,
+                    ]
+                ),
+            )
+        )
+    ).all()
+    affected: list[Session] = []
+    for session in rows:
+        try:
+            affected.append(
+                await extend_session_free(db, session, duration_minutes)
+            )
+        except ValueError:
+            continue
+    return affected

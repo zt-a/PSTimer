@@ -109,6 +109,17 @@ export const api = {
     request<Session>(`/sessions/${id}/warnings`, { method: 'POST', body: JSON.stringify(flags) }),
   getActiveSessions: () => request<Session[]>('/sessions/active'),
 
+  // Bulk session actions (power-outage helpers)
+  pauseAllSessions: () =>
+    request<{ affected: number }>('/sessions/pause-all', { method: 'POST' }),
+  resumeAllSessions: () =>
+    request<{ affected: number }>('/sessions/resume-all', { method: 'POST' }),
+  extendAllSessionsFree: (duration_minutes: number) =>
+    request<{ affected: number }>('/sessions/extend-all', {
+      method: 'POST',
+      body: JSON.stringify({ duration_minutes }),
+    }),
+
   // Settings (admin)
   getSettings: () => request<ClubSettings>('/settings'),
   updateSettings: (data: Partial<ClubSettings>) =>

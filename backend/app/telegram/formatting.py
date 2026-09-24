@@ -169,13 +169,104 @@ def event_warning(st: StationState, minutes: int, currency: str) -> str:
     )
 
 
+# ── global (bulk) events ─────────────────────────────────────────────────────
+def event_pause_all(count: int) -> str:
+    return f"⏸ <b>Все станции поставлены на паузу</b>\nСессий приостановлено: {count}"
+
+
+def event_resume_all(count: int) -> str:
+    return f"▶️ <b>Все станции возобновлены</b>\nСессий запущено: {count}"
+
+
+def event_extend_all(count: int, minutes: int) -> str:
+    return (
+        f"➕ <b>Всем активным сессиям добавлено {minutes} мин</b>\n"
+        f"Продлено сессий: {count}\n"
+        f"Бесплатно — цена не изменится"
+    )
+
+
 def help_message() -> str:
     return (
-        "🤖 <b>PS Club бот</b>\n\n"
-        "Доступные команды:\n"
+        "🤖 <b>PS Club — бот уведомлений</b>\n\n"
+        "Бот только показывает состояние станций и присылает уведомления. "
+        "Он ничего не запускает и не меняет.\n\n"
+        "Команды:\n"
+        "/start — меню и подписка\n"
         "/stations — состояние всех станций\n"
+        "/subs — мои подписки\n"
         "/stop — отключить уведомления\n"
         "/help — эта справка\n\n"
-        "Вы подписаны на уведомления: старт, пауза, продление, "
-        "предупреждения 5/3/1 мин, истечение времени и завершение сессии."
+        "Уведомления: старт, пауза, продление, предупреждения 5/3/1 мин, "
+        "истечение времени и завершение сессии."
     )
+
+
+# ── keyboards ────────────────────────────────────────────────────────────────
+def _btn(text: str, data: str) -> dict:
+    return {"text": text, "callback_data": data}
+
+
+def main_menu_keyboard() -> dict:
+    return {
+        "inline_keyboard": [
+            [_btn("📺 Станции", "menu:stations"), _btn("🔔 Подписки", "menu:subs")],
+            [_btn("ℹ️ Помощь", "menu:help")],
+        ]
+    }
+
+
+def back_keyboard(target: str = "menu:main") -> dict:
+    return {"inline_keyboard": [[_btn("⬅️ Назад", target)]]}
+
+
+def stations_keyboard(
+    stations, notify_all: bool, subscribed_ids: set[int]
+) -> dict:
+    all_label = "✅ Все станции" if notify_all else "⬜ Все станции"
+    rows = [[_btn(all_label, "all:off" if notify_all else "all:on")]]
+    row: list[dict] = []
+    for st in stations:
+        on = notify_all or st.id in subscribed_ids
+        row.append(_btn(f"{'✅' if on else '➕'} {st.name}", f"tog:{st.id}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([_btn("⬅️ Назад", "menu:main")])
+    return {"inline_keyboard": rows}
+
+
+def subs_keyboard() -> dict:
+    return {
+        "inline_keyboard": [
+            [_btn("📺 Выбрать станции", "menu:stations")],
+            [_btn("🔕 Отключить все", "all:off")],
+            [_btn("⬅️ Назад", "menu:main")],
+        ]
+    }
+
+
+def menu_message() -> str:
+    return (
+        "🎮 <b>PS Club — уведомления</b>\n\n"
+        "Выберите станции, о которых присылать уведомления, или включите все. "
+        "Отключить можно в любой момент кнопкой «🔕 Отключить все»."
+    )
+
+
+def subscriptions_text(sub) -> str:
+    if sub is None or not sub.is_active:
+        scope = "уведомления отключены"
+    elif sub.notify_all:
+        scope = "все станции"
+    elif sub.station_subs:
+        scope = f"выбрано станций: {len(sub.station_subs)}"
+    else:
+        scope = "уведомления отключены"
+    return f"🔔 <b>Мои подписки</b>\nСейчас: {scope}"
+
+
+def stop_message() -> str:
+    return "🔕 Уведомления отключены. /start — включить снова."

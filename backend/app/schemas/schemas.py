@@ -97,6 +97,10 @@ class SessionExtend(BaseModel):
     duration_minutes: int = Field(ge=1)
 
 
+class BulkResult(BaseModel):
+    affected: int
+
+
 class SessionOut(ORMModel):
     id: int
     station_id: int

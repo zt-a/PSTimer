@@ -272,3 +272,154 @@ async def test_expired_fixed_session_stays_occupied(client):
     r = await client.post(f"/api/sessions/{sess['id']}/stop", headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_bulk_pause_resume_extend_free(client):
+    """Power-outage helpers: pause/resume everything, then add unbilled time to
+    FIXED sessions only (OPEN sessions must be ignored and price unchanged)."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import Session
+
+    async with TestSession() as s:
+        s.add(_admin())
+        await s.commit()
+    login = await client.post(
+        "/api/auth/login", json={"username": "admin", "password": "adminpass"}
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    st1 = (
+        await client.post(
+            "/api/stations",
+            json={"name": "PS #1", "number": 1, "type": "PS5", "is_active": True},
+            headers=headers,
+        )
+    ).json()
+    st2 = (
+        await client.post(
+            "/api/stations",
+            json={"name": "PS #2", "number": 2, "type": "PS5", "is_active": True},
+            headers=headers,
+        )
+    ).json()
+    tariff = (
+        await client.post(
+            "/api/tariffs",
+            json={"name": "Standard", "price_per_hour": 300, "is_active": True},
+            headers=headers,
+        )
+    ).json()
+
+    fixed = (
+        await client.post(
+            "/api/sessions",
+            json={
+                "station_id": st1["id"],
+                "tariff_id": tariff["id"],
+                "is_open": False,
+                "duration_minutes": 60,
+            },
+            headers=headers,
+        )
+    ).json()
+    opened = (
+        await client.post(
+            "/api/sessions",
+            json={
+                "station_id": st2["id"],
+                "tariff_id": tariff["id"],
+                "is_open": True,
+            },
+            headers=headers,
+        )
+    ).json()
+
+    # pause everything (fixed + open)
+    r = await client.post("/api/sessions/pause-all", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["affected"] == 2
+
+    # resume everything
+    r = await client.post("/api/sessions/resume-all", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["affected"] == 2
+
+    # free extension applies to the fixed session only
+    r = await client.post(
+        "/api/sessions/extend-all", json={"duration_minutes": 15}, headers=headers
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["affected"] == 1
+
+    async with TestSession() as ss:
+        row = await ss.get(Session, fixed["id"])
+        assert row.comp_seconds == 15 * 60
+        open_row = await ss.get(Session, opened["id"])
+        assert open_row.comp_seconds == 0
+
+    # price is unchanged despite the extra 15 minutes
+    r = await client.post(f"/api/sessions/{fixed['id']}/stop", headers=headers)
+    assert Decimal(str(r.json()["amount"])) == Decimal("300.00")
+
+
+@pytest.mark.asyncio
+async def test_extend_all_free_revives_expired(client):
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import Session
+
+    async with TestSession() as s:
+        s.add(_admin())
+        await s.commit()
+    login = await client.post(
+        "/api/auth/login", json={"username": "admin", "password": "adminpass"}
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    st = (
+        await client.post(
+            "/api/stations",
+            json={"name": "PS #1", "number": 1, "type": "PS5", "is_active": True},
+            headers=headers,
+        )
+    ).json()
+    tariff = (
+        await client.post(
+            "/api/tariffs",
+            json={"name": "Standard", "price_per_hour": 300, "is_active": True},
+            headers=headers,
+        )
+    ).json()
+    sess = (
+        await client.post(
+            "/api/sessions",
+            json={
+                "station_id": st["id"],
+                "tariff_id": tariff["id"],
+                "is_open": False,
+                "duration_minutes": 60,
+            },
+            headers=headers,
+        )
+    ).json()
+
+    async with TestSession() as ss:
+        row = await ss.get(Session, sess["id"])
+        # started 65 min ago with a 60-min purchase -> already overdue by 5 min
+        now = datetime.now(timezone.utc)
+        row.started_at = now - timedelta(minutes=65)
+        row.expires_at = now - timedelta(minutes=5)
+        await ss.commit()
+
+    r = await client.post(
+        "/api/sessions/extend-all", json={"duration_minutes": 10}, headers=headers
+    )
+    assert r.json()["affected"] == 1
+
+    async with TestSession() as ss:
+        row = await ss.get(Session, sess["id"])
+        assert row.status.value == "ACTIVE"
+    r = await client.post(f"/api/sessions/{sess['id']}/stop", headers=headers)
+    assert Decimal(str(r.json()["amount"])) == Decimal("300.00")

@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -143,6 +144,10 @@ class Session(Base, TimestampMixin):
     )
     total_paused_seconds: Mapped[int] = mapped_column(Integer, default=0)
 
+    # free/compensated seconds added to a FIXED session (e.g. blackout
+    # compensation). Extends the timer but never the price.
+    comp_seconds: Mapped[int] = mapped_column(Integer, default=0)
+
     ended_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -205,7 +210,8 @@ class ClubSettings(Base, TimestampMixin):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Telegram subscribers (no auth: anyone who presses /start receives updates)
+# Telegram subscribers (no auth: anyone who presses /start can subscribe to
+# notifications for all stations or a chosen subset)
 # ─────────────────────────────────────────────────────────────────────────────
 class TelegramSubscriber(Base, TimestampMixin):
     __tablename__ = "telegram_subscribers"
@@ -215,3 +221,28 @@ class TelegramSubscriber(Base, TimestampMixin):
     username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     first_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # True = receive events for every station, regardless of station_subs.
+    notify_all: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    station_subs: Mapped[list["TelegramStationSubscription"]] = relationship(
+        back_populates="subscriber",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class TelegramStationSubscription(Base):
+    __tablename__ = "telegram_station_subscriptions"
+    __table_args__ = (
+        UniqueConstraint("subscriber_id", "station_id", name="uq_tg_sub_station"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    subscriber_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_subscribers.id", ondelete="CASCADE"), index=True
+    )
+    station_id: Mapped[int] = mapped_column(
+        ForeignKey("stations.id", ondelete="CASCADE"), index=True
+    )
+
+    subscriber: Mapped[TelegramSubscriber] = relationship(back_populates="station_subs")
