@@ -12,18 +12,51 @@
 ## Быстрый старт (Docker)
 
 ```bash
-cp backend/.env.example backend/.env   # при необходимости задать JWT_SECRET
-make up
+make up        # == docker compose up --build -d
 ```
 
 После старта:
 
-- ТВ-дашборд: http://localhost:5173
-- Админ-панель: http://localhost:5173/admin (по умолчанию `admin` / `admin`)
-- Swagger API: http://localhost:8000/docs
+- Веб-интерфейс (TV + админка): `http://<IP-сервера>/` (порт 80, при доступности)
+- API: `http://<IP-сервера>:8000`
+- Swagger API: `http://<IP-сервера>:8000/docs`
+- Логин по умолчанию: `admin` / `admin`
 
-При первом запуске контейнер backend сам прогоняет `alembic upgrade head`
-и сид-данные (админ, дефолтный тариф 300/час, 10 станций).
+При первом запуске backend сам прогоняет миграции (`alembic upgrade head`),
+сид (админ, тариф 300/час, 9 станций) и поднимается. Postgres доступен только
+внутри compose-сети — наружу не проброшен.
+
+**Продакшен (без домена, доступ по IP):**
+
+1. Скопировать `backend/.env.example` → `backend/.env` и при необходимости
+   задать свои значения. Обязательно сменить `ADMIN_PASSWORD` до первого
+   старта:
+   ```bash
+   cp backend/.env.example backend/.env
+   # vim/редактор: ADMIN_PASSWORD=..., при желании TELEGRAM_BOT_TOKEN=...
+   ```
+2.
+   ```bash
+   docker compose up --build -d
+   ```
+3. Открыть `http://<IP-сервера>/`.
+
+Полезное:
+
+```bash
+docker compose ps              # статус всех сервисов
+docker compose logs -f         # логи
+docker compose down            # остановить (данные в именованных volumes)
+docker compose up --build -d   # пересобрать и запустить после изменений
+```
+
+Переменные для изменения портов: `HTTP_PORT` (по умолчанию `80`) и
+`API_PORT` (по умолчанию `8000`), пароль БД — `POSTGRES_PASSWORD`.
+
+JWT-секрет: если `JWT_SECRET` пуст, он генерируется один раз и хранится на
+volume `backendsecrets` — токены админа переживают рестарт/пересборку. Данные
+БД — на volume `pgdata`. Удаление `docker compose down -v` сотрёт и секрет, и
+данные (потом нужен повторный логин).
 
 ## Локальная разработка (без Docker)
 

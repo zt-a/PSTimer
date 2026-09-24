@@ -57,10 +57,14 @@ class Settings(BaseSettings):
     def jwt_secret(self) -> str:
         """Return a usable JWT secret.
 
-        If JWT_SECRET is set (>=32 chars) it is used. Otherwise, for dev, a
-        random secret is generated once and persisted to a local `.jwt_secret`
-        file so it survives process restarts (otherwise every restart would
-        invalidate all issued tokens). Set JWT_SECRET explicitly in production.
+        If JWT_SECRET is set (>=32 chars) it is used. Otherwise a random
+        secret is generated once and persisted, so it survives restarts:
+
+        * in Docker: on the ``backendsecrets`` volume at ``/app/.secrets``;
+        * locally: in ``backend/.jwt_secret``.
+
+        Without persistence every restart would invalidate all issued tokens.
+        Set JWT_SECRET explicitly for multi-instance setups.
         """
         import logging
         import os
@@ -70,9 +74,9 @@ class Settings(BaseSettings):
         if len(secret) >= 32:
             return secret
 
-        secret_path = Path(__file__).resolve().parents[2] / ".jwt_secret"
+        path = self._jwt_secret_path()
         try:
-            existing = secret_path.read_text().strip()
+            existing = path.read_text().strip()
             if len(existing) >= 32:
                 return existing
         except FileNotFoundError:
@@ -80,16 +84,27 @@ class Settings(BaseSettings):
 
         generated = os.urandom(32).hex()
         try:
-            secret_path.write_text(generated)
-            os.chmod(secret_path, 0o600)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(generated)
+            os.chmod(path, 0o600)
         except OSError:
             pass
         logging.getLogger("app").warning(
-            "JWT_SECRET is not set — using a generated dev secret stored at %s. "
-            "Set JWT_SECRET in .env for production.",
-            secret_path,
+            "JWT_SECRET is not set — generating a persisted secret at %s. "
+            "For multi-instance deployments set JWT_SECRET in .env.",
+            path,
         )
         return generated
+
+    @staticmethod
+    def _jwt_secret_path():
+        """Prefer the mounted Docker secrets volume, else the app root dir."""
+        from pathlib import Path
+
+        docker_secrets = Path("/app/.secrets/.jwt_secret")
+        if docker_secrets.parent.is_dir():
+            return docker_secrets
+        return Path(__file__).resolve().parents[2] / ".jwt_secret"
 
 
 @lru_cache

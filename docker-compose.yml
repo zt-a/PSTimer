@@ -1,71 +1,94 @@
-version: "3.9"
+# Production stack: `docker compose up --build -d`.
+#
+# All services start, migrate and seed automatically. No domain needed —
+# open http://<SERVER-IP>/ (frontend on port 80, override with HTTP_PORT).
+#
+# Postgres is only reachable inside the compose network; the API is exposed
+# on API_PORT (8000) for direct/debug access.
 
 services:
   db:
     image: postgres:17-alpine
-    container_name: pstimer-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: pstimer
-      POSTGRES_PASSWORD: pstimer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pstimer}
       POSTGRES_DB: pstimer
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pstimer -d pstimer"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 12
 
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
     container_name: pstimer-backend
     restart: unless-stopped
     env_file:
-      - backend/.env.example
+      - path: backend/.env          # optional per-server overrides
+        required: false
+      - path: backend/.env.example  # sane defaults
+        required: true
     environment:
-      DATABASE_URL: postgresql+asyncpg://pstimer:pstimer@db:5432/pstimer
+      DATABASE_URL: postgresql+asyncpg://pstimer:${POSTGRES_PASSWORD:-pstimer}@db:5432/pstimer
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - backendsecrets:/app/.secrets   # persisted JWT secret
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request as u; u.urlopen('http://localhost:8000/api/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     command: >
       sh -c "alembic upgrade head &&
              python -m app.seed &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+             exec uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
     container_name: pstimer-frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "5173:80"
+      - "${HTTP_PORT:-80}:80"
 
   # Standalone retention worker: purges session history older than
   # HISTORY_RETENTION_DAYS (default 30). Keeps raw history to max 1 month.
   worker:
     build:
       context: ./backend
-      dockerfile: Dockerfile
     container_name: pstimer-worker
     restart: unless-stopped
     env_file:
-      - backend/.env.example
+      - path: backend/.env
+        required: false
+      - path: backend/.env.example
+        required: true
     environment:
-      DATABASE_URL: postgresql+asyncpg://pstimer:pstimer@db:5432/pstimer
+      DATABASE_URL: postgresql+asyncpg://pstimer:${POSTGRES_PASSWORD:-pstimer}@db:5432/pstimer
+    volumes:
+      - backendsecrets:/app/.secrets
     depends_on:
-      db:
+      backend:
         condition: service_healthy
     command: python -m app.worker
 
 volumes:
   pgdata:
+  backendsecrets:

@@ -12,6 +12,8 @@ venv/
 .env
 .env.*
 !.env.example
+.jwt_secret
+docker-compose.override.yml
 
 # Node / frontend
 node_modules/

@@ -42,13 +42,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors = dict(allow_methods=["*"], allow_headers=["*"])
+if "*" in settings.cors_origins_list:
+    # Wildcard origin cannot be combined with credentials (we use Bearer
+    # headers, so credentials are not needed). This makes direct browser
+    # calls to the backend from any IP work without a domain.
+    _cors.update(allow_origins=["*"], allow_credentials=False)
+else:
+    _cors.update(
+        allow_origins=settings.cors_origins_list, allow_credentials=True
+    )
+app.add_middleware(CORSMiddleware, **_cors)
 
 
 @app.get("/api/health")
