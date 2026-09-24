@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: pstimer-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pstimer
+      POSTGRES_PASSWORD: pstimer
+      POSTGRES_DB: pstimer
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pstimer -d pstimer"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pstimer-backend
+    restart: unless-stopped
+    env_file:
+      - backend/.env.example
+    environment:
+      DATABASE_URL: postgresql+asyncpg://pstimer:pstimer@db:5432/pstimer
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             python -m app.seed &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pstimer-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+  # Standalone retention worker: purges session history older than
+  # HISTORY_RETENTION_DAYS (default 30). Keeps raw history to max 1 month.
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pstimer-worker
+    restart: unless-stopped
+    env_file:
+      - backend/.env.example
+    environment:
+      DATABASE_URL: postgresql+asyncpg://pstimer:pstimer@db:5432/pstimer
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python -m app.worker
+
+volumes:
+  pgdata:

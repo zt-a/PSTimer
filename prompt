@@ -1,0 +1,1699 @@
+# TASK: Build a modern PlayStation Club Management System
+
+Ты — senior full-stack engineer. Нужно с нуля разработать production-quality MVP веб-системы для управления небольшим PlayStation-клубом.
+
+Система предназначена для игрового клуба с PS4/PS5. На первом этапе физически управлять консолями НЕ нужно. Система управляет игровыми местами, временем сессий, тарифами, кассой и отображением таймеров.
+
+Главная идея:
+
+* Администратор управляет игровыми местами.
+* Для каждого места можно открыть сессию:
+
+  * на 30 минут;
+  * на 1 час;
+  * на произвольное количество времени;
+  * в режиме "Открытый" — время не задаётся заранее, стоимость считается по фактически проведённому времени.
+* Администратор сам создаёт и изменяет цены.
+* Главная страница предназначена для большого телевизора/монитора в клубе.
+* На главной странице отображаются все игровые места и их таймеры.
+* Когда до окончания остаётся 5 минут, система должна визуально предупредить и голосом сообщить об окончании времени.
+* После окончания времени также должно быть голосовое уведомление.
+* Количество игровых мест должно быть настраиваемым. Сейчас предполагается 9 PS, но нельзя хардкодить число 9.
+* Интерфейс должен выглядеть как современный premium gaming dashboard: красивые анимации, плавные переходы, glassmorphism/dark UI, аккуратная типографика, хорошие состояния loading/error/empty и responsive layout.
+
+Не нужно делать клиентское приложение для PS5/PS4. Это WEB-приложение.
+
+---
+
+# 1. TECH STACK
+
+Используй:
+
+## Backend
+
+* Python 3.12+
+* FastAPI
+* SQLAlchemy 2.x
+* PostgreSQL
+* Alembic
+* Pydantic v2
+* JWT authentication
+* passlib/argon2 или другой современный безопасный password hashing
+* WebSocket для realtime обновления состояния
+* pytest
+* Docker / Docker Compose
+
+Не используй SQLite.
+
+Backend должен иметь чистую модульную структуру.
+
+Предпочтительная структура:
+
+backend/
+├── app/
+│   ├── main.py
+│   ├── core/
+│   │   ├── config.py
+│   │   ├── security.py
+│   │   └── database.py
+│   ├── models/
+│   ├── schemas/
+│   ├── api/
+│   │   ├── auth.py
+│   │   ├── stations.py
+│   │   ├── sessions.py
+│   │   ├── tariffs.py
+│   │   ├── settings.py
+│   │   └── dashboard.py
+│   ├── services/
+│   └── websocket/
+├── alembic/
+├── tests/
+├── Dockerfile
+└── requirements.txt
+
+Можно изменить структуру, если есть более качественный вариант.
+
+---
+
+# 2. FRONTEND
+
+Используй:
+
+* React
+* TypeScript
+* Vite
+* React Router
+* TanStack Query
+* Zustand или другой лёгкий state manager
+* Tailwind CSS
+* shadcn/ui или аналогичные качественные UI primitives
+* Framer Motion / Motion для анимаций
+* Lucide icons
+* WebSocket
+* React Hook Form
+* Zod
+
+Frontend должен быть SPA.
+
+Структура:
+
+frontend/
+├── src/
+│   ├── app/
+│   ├── components/
+│   ├── features/
+│   ├── pages/
+│   ├── hooks/
+│   ├── lib/
+│   ├── stores/
+│   ├── api/
+│   ├── types/
+│   └── styles/
+
+Не делай всё в одном App.tsx.
+
+---
+
+# 3. ОСНОВНЫЕ СТРАНИЦЫ
+
+Нужно всего две основные страницы:
+
+1. `/`
+   Main / TV Dashboard
+
+2. `/admin`
+   Admin Dashboard
+
+Также нужна:
+
+3. `/login`
+   Авторизация администратора.
+
+После авторизации `/admin` доступна только администратору.
+
+---
+
+# 4. MAIN / TV DASHBOARD
+
+Главная страница предназначена для телевизора в игровом клубе.
+
+Она должна работать в fullscreen браузере.
+
+Пример:
+
+9 игровых мест:
+
+PS #1
+PS #2
+PS #3
+PS #4
+PS #5
+PS #6
+PS #7
+PS #8
+PS #9
+
+Но количество мест должно быть динамическим.
+
+Например администратор создал 12 мест — автоматически отображаются 12 карточек.
+
+---
+
+# 5. DESIGN MAIN PAGE
+
+Создай очень современный premium gaming UI.
+
+Основная тема:
+
+* dark
+* black / charcoal background
+* subtle gradients
+* glassmorphism
+* soft borders
+* neon-like accents
+* large readable timer
+* minimal unnecessary text
+* smooth animations
+* professional, not childish
+
+Не используй чрезмерные неоновые эффекты.
+
+Интерфейс должен выглядеть как современный SaaS/gaming dashboard.
+
+Карточка станции примерно:
+
+┌─────────────────────────────┐
+│ PS #04             ● ИГРАЕТ │
+│                             │
+│         00:42:17             │
+│                             │
+│         210 сом              │
+│                             │
+│        До конца              │
+└─────────────────────────────┘
+
+Для свободной станции:
+
+┌─────────────────────────────┐
+│ PS #05                      │
+│                             │
+│          СВОБОДНО            │
+│                             │
+│       Ожидание игрока        │
+└─────────────────────────────┘
+
+Для открытой сессии:
+
+┌─────────────────────────────┐
+│ PS #06            ● OPEN     │
+│                             │
+│         01:42:17             │
+│                             │
+│         520 сом              │
+│                             │
+│      Сессия продолжается     │
+└─────────────────────────────┘
+
+---
+
+# 6. RESPONSIVE GRID
+
+Система должна автоматически подбирать сетку.
+
+Для 9 станций:
+
+desktop/TV:
+
+3 x 3
+
+Для 12:
+
+4 x 3
+
+Для 16:
+
+4 x 4
+
+Для большого количества:
+
+responsive CSS Grid.
+
+На маленьких экранах карточки должны перестраиваться.
+
+Но основная цель — TV/desktop.
+
+---
+
+# 7. STATION STATES
+
+У каждой станции есть состояния:
+
+FREE
+ACTIVE
+OPEN
+WARNING
+EXPIRED
+PAUSED
+
+Цвета должны быть не просто красный/зелёный.
+
+Используй аккуратные визуальные состояния.
+
+ACTIVE:
+normal accent.
+
+WARNING:
+animated border/glow/pulse.
+
+EXPIRED:
+strong visual state.
+
+FREE:
+neutral.
+
+---
+
+# 8. TIMER
+
+Таймер должен показывать:
+
+HH:MM
+
+Например:
+
+01:24:37
+
+Не делай countdown исключительно на основе setInterval без учёта реального времени.
+
+Сервер должен передавать:
+
+started_at
+expires_at
+
+Frontend рассчитывает:
+
+expires_at - current_time
+
+Таким образом таймер не должен сильно уходить от реального времени.
+
+При обновлении страницы состояние должно восстанавливаться с сервера.
+
+---
+
+# 9. SESSION TYPES
+
+Нужно поддержать два основных режима.
+
+## FIXED SESSION
+
+Например:
+
+30 минут
+1 час
+2 часа
+3 часа
+
+Администратор выбирает длительность.
+
+Например:
+
+PS #3
+1 час
+300 сом
+
+Система создаёт:
+
+started_at = now
+expires_at = now + 1 hour
+
+---
+
+# 10. CUSTOM DURATION
+
+Администратор должен иметь возможность задать произвольную длительность.
+
+Например:
+
+45 минут
+90 минут
+2 часа 30 минут
+
+Не ограничивайся только заранее созданными тарифами.
+
+---
+
+# 11. OPEN SESSION
+
+Очень важный режим.
+
+Администратор нажимает:
+
+"Открытый"
+
+Система начинает считать время.
+
+Например:
+
+started_at:
+20:00
+
+Текущее время:
+21:37
+
+Продолжительность:
+1h 37m
+
+Если тариф:
+
+300 сом / час
+
+система рассчитывает стоимость согласно настройке округления.
+
+---
+
+# 12. BILLING / ROUNDING
+
+Администратор должен иметь настройку способа расчёта.
+
+Например:
+
+PER_MINUTE
+EVERY_15_MINUTES
+EVERY_30_MINUTES
+PER_HOUR
+
+Пример:
+
+300 сом / час
+
+PER_MINUTE:
+
+30 минут = 150 сом
+
+EVERY_30_MINUTES:
+
+1ч 10м = 450 сом
+
+PER_HOUR:
+
+1ч 10м = 600 сом
+
+Реализуй это как configurable business rule.
+
+---
+
+# 13. TARIFFS
+
+Администратор сам устанавливает цены.
+
+Например:
+
+PS5 Standard
+300 сом / час
+
+PS5 VIP
+400 сом / час
+
+Ночной тариф
+200 сом / час
+
+Но не зашивай эти значения в код.
+
+В админке:
+
+Tariffs
+
+┌──────────────────────────────┐
+│ Standard                     │
+│ 300 сом / час                │
+│ [Edit] [Delete]              │
+├──────────────────────────────┤
+│ VIP                          │
+│ 400 сом / час                │
+│ [Edit] [Delete]              │
+└──────────────────────────────┘
+
+Новый тариф:
+
+Name
+Price per hour
+Rounding method
+Active
+
+---
+
+# 14. ADMIN DASHBOARD
+
+Admin Dashboard должен быть максимально удобным для оператора.
+
+Главный экран:
+
+┌──────────────────────────────────────────────┐
+│ PLAYSTATION CLUB                             │
+│                                              │
+│ Выручка сегодня        8 450 сом             │
+│ Активные сессии             7                │
+│ Свободные места             2                │
+│                                              │
+├──────────────────────────────────────────────┤
+│                                              │
+│ PS #1     00:42:10    210 сом                │
+│ [ +30 мин ] [ +1 час ] [ Stop ]              │
+│                                              │
+│ PS #2     FREE                               │
+│ [ Start ]                                    │
+│                                              │
+└──────────────────────────────────────────────┘
+
+---
+
+# 15. START SESSION
+
+При нажатии Start открыть красивый modal.
+
+Например:
+
+Start Session
+
+Station:
+PS #4
+
+Tariff:
+[ Standard ▼ ]
+
+Duration:
+
+[ 30 min ]
+[ 1 hour ]
+[ 2 hours ]
+[ Custom ]
+
+или:
+
+[ OPEN SESSION ]
+
+Price:
+300 сом
+
+[ START SESSION ]
+
+---
+
+# 16. OPEN SESSION MODAL
+
+Если выбран Open:
+
+Station:
+PS #4
+
+Tariff:
+Standard
+
+Price:
+300 сом/hour
+
+Rounding:
+Every 30 minutes
+
+[ START ]
+
+После запуска:
+
+PS #4
+OPEN
+00:14:31
+75 сом
+
+---
+
+# 17. EXTEND SESSION
+
+Для активной сессии:
+
+[ +15 min ]
+[ +30 min ]
+[ +1 hour ]
+[ Custom ]
+
+После добавления времени frontend и TV должны обновиться через WebSocket.
+
+---
+
+# 18. STOP SESSION
+
+При остановке показать confirmation modal.
+
+Например:
+
+Stop session?
+
+PS #4
+
+Duration:
+01:27:34
+
+Total:
+450 сом
+
+[ Cancel ]
+[ Stop & Complete ]
+
+После завершения:
+
+* session становится COMPLETED
+* создаётся transaction
+* станция становится FREE
+* сумма попадает в дневную выручку.
+
+---
+
+# 19. PAUSE
+
+Поддержать pause/resume.
+
+При pause:
+
+таймер останавливается.
+
+При resume:
+
+оставшееся время продолжает идти.
+
+Для OPEN session также корректно учитывать паузу.
+
+---
+
+# 20. VOICE NOTIFICATIONS
+
+Это одна из главных функций.
+
+Когда до окончания fixed session остаётся:
+
+5 минут
+
+система должна автоматически сказать голосом:
+
+"Внимание. Игровое место номер четыре. До окончания игры осталось пять минут."
+
+При:
+
+3 минуты:
+
+"Игровое место номер четыре. До окончания игры осталось три минуты."
+
+При:
+
+1 минута:
+
+"Игровое место номер четыре. До окончания игры осталась одна минута."
+
+При:
+
+0:
+
+"Игровое место номер четыре. Время игры закончилось."
+
+Использовать Web Speech API:
+
+window.speechSynthesis
+
+Никаких внешних AI/TTS API.
+
+Голос должен быть на русском языке.
+
+Попробовать автоматически выбрать доступный ru-RU voice.
+
+Если voice недоступен — использовать browser default voice.
+
+---
+
+# 21. VOICE SETTINGS
+
+В админке:
+
+Voice notifications:
+
+ON/OFF
+
+Warning times:
+
+☑ 5 minutes
+☑ 3 minutes
+☑ 1 minute
+☑ Expired
+
+Volume:
+
+0-100%
+
+Language:
+
+Russian
+
+Также на TV Dashboard должна быть кнопка:
+
+"🔊 Включить звук"
+
+потому что браузер может блокировать autoplay/audio до первого user interaction.
+
+---
+
+# 22. DUPLICATE VOICE PROTECTION
+
+Очень важно.
+
+Система не должна повторять:
+
+"Осталось 5 минут"
+
+каждую секунду.
+
+Для каждой session хранить/определять:
+
+warning_5_sent
+warning_3_sent
+warning_1_sent
+expired_sent
+
+Можно хранить это в frontend state, но лучше обеспечить корректную серверную/realtime логику.
+
+После refresh предупреждение не должно бесконечно воспроизводиться повторно.
+
+---
+
+# 23. VISUAL WARNING
+
+Когда осталось 5 минут:
+
+карточка должна перейти в WARNING state.
+
+Например:
+
+* subtle red/orange glow
+* smooth pulse
+* timer becomes visually prominent
+* small label:
+
+"ОСТАЛОСЬ 5 МИНУТ"
+
+Не используй раздражающее постоянное мигание.
+
+Animation должна быть smooth.
+
+---
+
+# 24. EXPIRED
+
+Когда время закончилось:
+
+карточка:
+
+"ВРЕМЯ ЗАКОНЧИЛОСЬ"
+
+и красивый animation.
+
+Не удалять session автоматически.
+
+Она должна перейти в EXPIRED.
+
+Администратор должен увидеть её и завершить/закрыть.
+
+---
+
+# 25. REALTIME
+
+Использовать WebSocket.
+
+Пример:
+
+/ws/dashboard
+
+Когда администратор:
+
+start session
+stop session
+extend session
+pause
+resume
+
+все подключённые клиенты получают update.
+
+Например:
+
+TV Dashboard
+Admin Dashboard
+
+оба должны видеть изменения практически мгновенно.
+
+---
+
+# 26. DATABASE MODELS
+
+Минимально:
+
+Admin/User
+
+Station
+
+Tariff
+
+Session
+
+Transaction
+
+ClubSettings
+
+Рекомендуемые поля.
+
+Admin:
+
+id
+username
+password_hash
+created_at
+
+Station:
+
+id
+name
+number
+type
+is_active
+created_at
+
+Tariff:
+
+id
+name
+price_per_hour
+rounding_method
+is_active
+created_at
+updated_at
+
+Session:
+
+id
+station_id
+tariff_id
+type
+status
+started_at
+expires_at
+paused_at
+total_paused_seconds
+ended_at
+price
+created_at
+
+Transaction:
+
+id
+session_id
+station_id
+amount
+type
+created_at
+
+ClubSettings:
+
+id
+club_name
+currency
+voice_enabled
+warning_5_enabled
+warning_3_enabled
+warning_1_enabled
+expired_voice_enabled
+rounding_method
+created_at
+updated_at
+
+---
+
+# 27. MONEY
+
+Деньги НЕ хранить в float.
+
+Используй Decimal / NUMERIC в PostgreSQL.
+
+Валюта по умолчанию:
+
+KGS
+
+Отображать:
+
+300 сом
+
+Но архитектура должна позволять изменить валюту.
+
+---
+
+# 28. AUTHENTICATION
+
+Нужна полноценная admin authentication.
+
+Login:
+
+username
+password
+
+JWT access token.
+
+Protected admin endpoints.
+
+Не хранить password в plaintext.
+
+Password hashing:
+
+Argon2 предпочтительно.
+
+Frontend:
+
+ProtectedRoute.
+
+Если пользователь не авторизован:
+
+/admin
+
+→ /login
+
+---
+
+# 29. SECURITY
+
+Добавить:
+
+* CORS configuration
+* secure password hashing
+* JWT expiration
+* validation
+* proper HTTP status codes
+* authorization checks
+* no sensitive information in errors
+* environment variables
+* .env.example
+
+Не хардкодить secrets.
+
+---
+
+# 30. API
+
+Сделать нормальный REST API.
+
+Например:
+
+POST /api/auth/login
+
+GET /api/stations
+
+POST /api/stations
+
+PATCH /api/stations/{id}
+
+DELETE /api/stations/{id}
+
+GET /api/tariffs
+
+POST /api/tariffs
+
+PATCH /api/tariffs/{id}
+
+DELETE /api/tariffs/{id}
+
+GET /api/sessions/active
+
+POST /api/sessions
+
+POST /api/sessions/{id}/extend
+
+POST /api/sessions/{id}/pause
+
+POST /api/sessions/{id}/resume
+
+POST /api/sessions/{id}/stop
+
+GET /api/dashboard
+
+GET /api/reports/daily
+
+GET /api/settings
+
+PATCH /api/settings
+
+WebSocket:
+
+/ws/dashboard
+
+---
+
+# 31. DAILY STATISTICS
+
+На admin dashboard показать:
+
+Сегодня:
+
+Revenue
+Completed sessions
+Active sessions
+Free stations
+Average session duration
+
+Например:
+
+Выручка:
+12 450 сом
+
+Сессий:
+37
+
+Активных:
+6
+
+Свободных:
+3
+
+---
+
+# 32. REPORTS
+
+Минимальный отчёт:
+
+Today
+
+Total revenue
+Cash transactions
+Number of sessions
+Total play time
+
+И список:
+
+Time
+Station
+Duration
+Tariff
+Amount
+Status
+
+---
+
+# 33. ADMIN STATION MANAGEMENT
+
+Администратор должен иметь возможность:
+
+Create station
+
+Например:
+
+PS #10
+
+type:
+PS5
+
+active:
+true
+
+Можно:
+
+Edit
+Disable
+Delete
+
+Если station disabled — она не отображается как доступная для запуска новой сессии.
+
+---
+
+# 34. NUMBER OF STATIONS
+
+Нельзя делать:
+
+const stations = [1,2,3,4,5,6,7,8,9]
+
+Нельзя хардкодить 9.
+
+Количество станций приходит из API.
+
+---
+
+# 35. TV MODE
+
+Главная страница должна иметь специальный TV mode.
+
+Не показывать:
+
+* admin controls
+* navigation
+* unnecessary buttons
+
+Только:
+
+club name
+current date/time
+station cards
+voice state
+
+Добавить кнопку/режим:
+
+"Fullscreen"
+
+Можно использовать browser Fullscreen API.
+
+---
+
+# 36. CURRENT TIME
+
+На TV Dashboard сверху показывать:
+
+22:43
+
+22 сентября 2026
+
+Часы обновляются каждую секунду.
+
+---
+
+# 37. SOUND
+
+Кроме речи можно добавить небольшой notification sound.
+
+Но звук должен быть ненавязчивым.
+
+Для warning:
+
+subtle notification sound
+
+после чего speech synthesis.
+
+---
+
+# 38. ANIMATIONS
+
+Использовать Motion/Framer Motion.
+
+Нужны:
+
+* card entrance animation
+* hover
+* state transitions
+* modal animation
+* toast animation
+* warning animation
+* number/timer transitions
+* page transitions
+
+Но не превращать приложение в flashy gaming website.
+
+Приоритет:
+
+smoothness > effects.
+
+Поддержать:
+
+prefers-reduced-motion
+
+Если пользователь отключил animations — сократить/отключить анимации.
+
+---
+
+# 39. UI QUALITY
+
+Не делай типичный:
+
+white background
+basic Bootstrap
+ugly tables
+default buttons
+
+Нужен действительно современный интерфейс.
+
+Используй:
+
+* consistent spacing
+* typography hierarchy
+* subtle borders
+* rounded cards
+* good contrast
+* modern icons
+* skeleton loaders
+* toast notifications
+* confirmation dialogs
+* empty states
+* error states
+
+---
+
+# 40. MOBILE ADMIN
+
+Admin page должна нормально работать на телефоне.
+
+Например оператор может открыть:
+
+/admin
+
+на Android/iPhone.
+
+Но TV Dashboard оптимизировать прежде всего под desktop/TV.
+
+---
+
+# 41. OFFLINE / NETWORK BEHAVIOR
+
+Если TV временно потерял WebSocket:
+
+не сбрасывать таймер.
+
+Показывать небольшой статус:
+
+"Соединение потеряно"
+
+После восстановления:
+
+"Соединение восстановлено"
+
+И синхронизировать состояние с сервером.
+
+---
+
+# 42. SERVER TIME
+
+Для критической логики не доверять времени клиента.
+
+Backend является источником истины.
+
+Frontend может получать server_time при initial dashboard response.
+
+---
+
+# 43. DATABASE MIGRATIONS
+
+Использовать Alembic.
+
+После создания проекта должно работать:
+
+docker compose up -d
+
+и затем:
+
+alembic upgrade head
+
+Создать initial admin через CLI command или seed script.
+
+Например:
+
+python -m app.seed_admin
+
+---
+
+# 44. DOCKER
+
+Создать:
+
+docker-compose.yml
+
+services:
+
+postgres
+backend
+frontend
+
+В development frontend можно запускать отдельно.
+
+Backend должен подключаться к PostgreSQL через environment variables.
+
+---
+
+# 45. ENVIRONMENT
+
+Создать:
+
+.env.example
+
+Например:
+
+DATABASE_URL=
+JWT_SECRET=
+ACCESS_TOKEN_EXPIRE_MINUTES=
+CORS_ORIGINS=
+POSTGRES_DB=
+POSTGRES_USER=
+POSTGRES_PASSWORD=
+
+Никаких реальных secrets в git.
+
+---
+
+# 46. TESTING
+
+Backend tests:
+
+* login
+* station CRUD
+* tariff CRUD
+* create fixed session
+* create open session
+* extend session
+* pause/resume
+* stop session
+* billing calculation
+* rounding
+* permissions
+
+Frontend:
+
+минимально протестировать:
+
+* timer
+* session state
+* warning logic
+* admin protected route
+
+---
+
+# 47. BILLING EXAMPLES
+
+Обязательно написать unit tests.
+
+Example:
+
+price = 300 KGS/hour
+
+30 minutes:
+150 KGS
+
+60 minutes:
+300 KGS
+
+90 minutes:
+450 KGS
+
+Для rounding rules проверить каждый вариант.
+
+---
+
+# 48. IMPORTANT BUSINESS RULE
+
+Fixed session:
+
+Если пользователь купил 1 час за 300 сом:
+
+start:
+20:00
+
+expires:
+21:00
+
+Даже если текущая стоимость тарифа потом изменится на 350 сом:
+
+эта уже созданная сессия должна сохранить первоначальную цену/условия.
+
+Нельзя пересчитывать старую сессию по новому тарифу.
+
+---
+
+# 49. OPEN SESSION
+
+Для Open Session стоимость рассчитывается по текущему тарифу, но при завершении нужно зафиксировать итоговую сумму.
+
+Если тариф был изменён во время активной Open Session, желательно использовать tariff snapshot / price snapshot, чтобы текущая сессия не менялась неожиданно.
+
+---
+
+# 50. UX FLOW
+
+Основной flow:
+
+ADMIN LOGIN
+
+↓
+
+ADMIN DASHBOARD
+
+↓
+
+Select PS #4
+
+↓
+
+Start Session
+
+↓
+
+Select:
+
+1 hour
+
+↓
+
+Select tariff:
+
+Standard
+
+↓
+
+300 сом
+
+↓
+
+START
+
+↓
+
+PS #4 становится ACTIVE
+
+↓
+
+TV автоматически показывает:
+
+00:59:59
+
+↓
+
+5 minutes
+
+↓
+
+visual warning
+
+*
+
+voice:
+
+"Внимание. Игровое место номер четыре. До окончания игры осталось пять минут."
+
+↓
+
+3 minutes
+
+↓
+
+voice
+
+↓
+
+1 minute
+
+↓
+
+voice
+
+↓
+
+00:00
+
+↓
+
+voice:
+
+"Игровое место номер четыре. Время игры закончилось."
+
+↓
+
+ADMIN
+
+Stop & Complete
+
+↓
+
+Transaction
+
+↓
+
+PS #4 FREE
+
+---
+
+# 51. OPEN SESSION FLOW
+
+ADMIN
+
+↓
+
+PS #4
+
+↓
+
+Open Session
+
+↓
+
+START
+
+↓
+
+00:00:01
+
+↓
+
+00:30:00
+
+↓
+
+01:30:00
+
+↓
+
+ADMIN Stop
+
+↓
+
+System calculates final amount
+
+↓
+
+Transaction created
+
+↓
+
+PS #4 FREE
+
+---
+
+# 52. IMPORTANT: DON'T OVERENGINEER
+
+Это MVP.
+
+Не добавляй сейчас:
+
+* microservices
+* Kafka
+* Kubernetes
+* Redis unless genuinely needed
+* Celery unless genuinely needed
+* complex RBAC
+* payment gateways
+* PS5 API integrations
+* mobile application
+* Electron
+* native TV app
+
+Нужна простая, стабильная система.
+
+---
+
+# 53. PROJECT STRUCTURE
+
+Создай monorepo:
+
+playstation-club/
+├── backend/
+├── frontend/
+├── docker-compose.yml
+├── .env.example
+├── README.md
+└── Makefile
+
+---
+
+# 54. README
+
+README должен содержать:
+
+* project description
+* architecture
+* requirements
+* local development
+* Docker setup
+* environment variables
+* migrations
+* create admin
+* frontend development
+* backend development
+* production build
+* API overview
+
+---
+
+# 55. CODE QUALITY
+
+Код должен быть:
+
+* typed
+* readable
+* modular
+* maintainable
+* documented where necessary
+
+Python:
+
+* type hints
+* async SQLAlchemy
+* Pydantic schemas
+* service layer
+
+TypeScript:
+
+* strict mode
+* no any unless absolutely necessary
+* reusable components
+* typed API responses
+
+---
+
+# 56. DO NOT DO THESE THINGS
+
+Не:
+
+* хардкодить станции
+* хардкодить цены
+* хранить деньги в float
+* хранить пароли plaintext
+* делать polling каждую секунду для всего dashboard
+* создавать отдельный timer backend task для каждого PS
+* использовать setInterval как источник истины
+* делать UI из огромного одного компонента
+* использовать fake data после реализации API
+* оставлять TODO вместо работающего функционала
+* делать только frontend mockup
+
+---
+
+# 57. DEVELOPMENT APPROACH
+
+Работай поэтапно.
+
+Сначала:
+
+1. Создай project structure.
+2. Настрой backend.
+3. Настрой PostgreSQL.
+4. Настрой Alembic.
+5. Создай models.
+6. Реализуй authentication.
+7. Реализуй stations.
+8. Реализуй tariffs.
+9. Реализуй sessions.
+10. Реализуй billing.
+11. Реализуй WebSocket.
+12. Создай frontend.
+13. Создай TV dashboard.
+14. Создай admin dashboard.
+15. Добавь voice notifications.
+16. Добавь animations.
+17. Добавь tests.
+18. Добавь Docker.
+19. Проверь весь flow end-to-end.
+
+После каждого крупного этапа запускай tests/build и исправляй ошибки.
+
+---
+
+# 58. BEFORE CODING
+
+Перед началом:
+
+1. Проанализируй требования.
+2. Составь краткий implementation plan.
+3. Покажи структуру проекта.
+4. Затем начинай реализацию.
+
+Не останавливайся после создания плана.
+
+Продолжай самостоятельно до рабочего MVP.
+
+Если встречаешь неоднозначность — выбирай простое решение, соответствующее описанной архитектуре, вместо того чтобы останавливаться и спрашивать.
+
+---
+
+# 59. FINAL ACCEPTANCE CRITERIA
+
+Проект считается готовым только если:
+
+### Authentication
+
+* admin can login
+* unauthorized user cannot access /admin
+
+### Stations
+
+* can create stations
+* can edit stations
+* can disable stations
+* number of stations is dynamic
+
+### Tariffs
+
+* admin can create tariffs
+* admin can edit prices
+* admin can disable tariffs
+
+### Fixed sessions
+
+* 30 minutes works
+* 1 hour works
+* custom duration works
+
+### Open sessions
+
+* open session works
+* timer counts upward
+* final amount is calculated correctly
+
+### Billing
+
+* correct price
+* correct rounding
+* Decimal money
+* transaction created on completion
+
+### Timer
+
+* HH:MM
+* survives browser refresh
+* synchronized with server state
+
+### Voice
+
+* 5 minute warning
+* 3 minute warning
+* 1 minute warning
+* expiration warning
+* no duplicate warnings
+* Russian speech
+* enable/disable setting
+
+### Realtime
+
+* admin changes are reflected on TV
+* TV changes are reflected on admin
+* WebSocket reconnect works
+
+### UI
+
+* modern
+* responsive
+* smooth animations
+* dark gaming dashboard
+* TV friendly
+* mobile admin friendly
+
+### Deployment
+
+* Docker Compose works
+* PostgreSQL works
+* migrations work
+* README is complete
+
+Do not declare the project finished until these acceptance criteria are satisfied.
+

@@ -1,0 +1,29 @@
+# ── Web framework ──────────────────────────────────────────────────────
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.34,<1.0
+python-multipart>=0.0.20
+
+# ── Pydantic v2 ────────────────────────────────────────────────────────
+pydantic>=2.12
+pydantic-settings>=2.7
+
+# ── ORM / DB ───────────────────────────────────────────────────────────
+SQLAlchemy>=2.0.43
+asyncpg>=0.31
+alembic>=1.14
+greenlet>=3.2.4
+
+# ── Auth / security ────────────────────────────────────────────────────
+argon2-cffi>=23.1
+PyJWT>=2.10
+
+# ── Validation / extra ─────────────────────────────────────────────────
+email-validator>=2.2
+
+# ── Integrations ───────────────────────────────────────────────────────
+httpx>=0.28            # async Telegram Bot API client
+
+# ── Tests ──────────────────────────────────────────────────────────────
+pytest>=8.3
+pytest-asyncio>=0.25
+aiosqlite>=0.20
