@@ -86,6 +86,7 @@ net_check() {
   fi
 }
 net_check https://pypi.org/simple/ "pypi.org"
+net_check https://registry.npmjs.org/ "npm registry"
 net_check https://registry-1.docker.io/v2/ "docker registry"
 
 echo "==> Configuration"
