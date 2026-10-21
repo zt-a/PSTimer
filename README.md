@@ -15,6 +15,9 @@
 make up        # == docker compose up --build -d
 ```
 
+`make up` сам останавливает локальные dev-серверы (они держат порты 80/8000),
+пересоздаёт стек и ждёт, пока все сервисы станут healthy.
+
 После старта:
 
 - Веб-интерфейс (TV + админка): `http://<IP-сервера>/` (порт 80, при доступности)
@@ -25,6 +28,19 @@ make up        # == docker compose up --build -d
 При первом запуске backend сам прогоняет миграции (`alembic upgrade head`),
 сид (админ, тариф 300/час, 9 станций) и поднимается. Postgres доступен только
 внутри compose-сети — наружу не проброшен.
+
+### Два режима — не смешивать
+
+| Режим | Команды | Адрес |
+|---|---|---|
+| **Docker** (всё в контейнерах, как в проде) | `make up` | http://localhost/ |
+| **Dev без Docker** (hot-reload) | `make down` → `make backend` + `make frontend` | http://localhost:5173 |
+
+Оба режима используют порт 8000, поэтому одновременно не работают — сначала
+остановите один из них (`make down` / `make dev-stop`).
+
+Полезно: при запущенном Docker-стеке можно поднять только Vite (`make frontend`) —
+он проксирует `/api` и `/ws` на backend из контейнера.
 
 **Продакшен (без домена, доступ по IP):**
 
@@ -51,6 +67,7 @@ docker compose ps              # статус всех сервисов
 docker compose logs -f         # логи
 docker compose down            # остановить (данные в именованных volumes)
 docker compose up --build -d   # пересобрать и запустить после изменений
+make dev-stop                  # остановить локальные dev-серверы (uvicorn/vite)
 ```
 
 Настройки сервера — в корневом `.env`: `HTTP_PORT` (по умолчанию `80`),
@@ -85,12 +102,14 @@ docker compose ps  # все сервисы должны быть Up (backend —
 
 | Симптом | Причина | Решение |
 |---|---|---|
-| `port is already allocated` | порт 80/8000 занят | `HTTP_PORT=8080` в `.env` |
+| `failed to bind host port 0.0.0.0:8000/tcp: address already in use` | локальный dev-backend (uvicorn) держит порт | `make dev-stop` (или `make up` сделает это сам) |
+| контейнер `Restarting`, в логах `Temporary failure in name resolution` | контейнер остался на удалённой сети | `docker compose down && docker compose up -d` |
+| `port is already allocated` для 80 | на сервере уже есть nginx/apache | `HTTP_PORT=8080` в `.env` |
 | `docker compose: command not found` | нет плагина Compose v2 | `sudo apt-get install docker-compose-plugin` |
 | `services.backend.env_file must be a mapping` | слишком старый Compose | обновить Compose до v2.x |
 | `cannot build: out of memory` / OOM | < 1 ГБ RAM | добавить swap или уменьшить нагрузку |
 | `Seed complete` + `Application startup complete`, но сайт не открывается | закрыт firewall | `sudo ufw allow 80/tcp` |
-| забыл пароль админа | — | `docker compose exec backend python -m app.seed --reset-password` |
+| забыл пароль админа | — | `make admin-password` |
 
 ## Локальная разработка (без Docker)
 

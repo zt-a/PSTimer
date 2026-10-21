@@ -1,14 +1,23 @@
-.PHONY: up down logs ps restart doctor db-migrate db-revision admin-password backend frontend worker worker-once test
+.PHONY: up down logs ps restart doctor dev-stop db-migrate db-revision admin-password backend frontend worker worker-once test
 
 # ── Docker (full stack) ──────────────────────────────────────────────
+# Local dev servers are stopped first: they hold ports 80/8000 and would
+# make the Docker containers fail with "address already in use".
 up:
+	@bash scripts/dev-stop.sh
+	docker compose down --remove-orphans >/dev/null 2>&1 || true
 	docker compose up -d --build
+	@bash scripts/wait-healthy.sh 120
 
 down:
 	docker compose down
 
 restart:
-	docker compose down && docker compose up -d --build
+	docker compose down && $(MAKE) up
+
+# Stop the local dev servers (uvicorn/vite) so Docker can use ports 80/8000
+dev-stop:
+	@bash scripts/dev-stop.sh
 
 # Pre-flight diagnostics (ports, compose version, RAM, disk, .env)
 doctor:

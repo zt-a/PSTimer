@@ -46,15 +46,39 @@ fi
 echo "==> Ports"
 check_port() {
   port="$1"; label="$2"
-  holder=$(ss -ltnp 2>/dev/null | awk -v p=":$port\$" '$4 ~ p {print $NF}' | head -1)
-  if [ -z "$holder" ]; then
+  line=$(ss -ltnp 2>/dev/null | awk -v p=":$port\$" '$4 ~ p {print; exit}')
+  if [ -z "$line" ]; then
     ok "port $port ($label) is free"
-  elif docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -q ":$port->"; then
-    ok "port $port ($label) is used by our own container (stack already running)"
-  else
-    bad "port $port ($label) is busy: $holder"
-    bad "  fix: free it, or set $label in .env (e.g. HTTP_PORT=8080)"
+    return
   fi
+  if docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -q ":$port->"; then
+    ok "port $port ($label) is used by our own container (stack already running)"
+    return
+  fi
+  who=$(printf '%s' "$line" | grep -o 'users:((".*"))' | head -1)
+  if [ -n "$who" ]; then
+    case "$who" in
+      *uvicorn*|*python*) kind="local dev backend (uvicorn)";;
+      *node*|*vite*)     kind="local dev frontend (vite)";;
+      *)                 kind="$who";;
+    esac
+  elif pgrep -f "[u]vicorn app.main:app" >/dev/null 2>&1; then
+    kind="local dev backend (uvicorn)"
+  elif pgrep -f "[n]ode .*vite" >/dev/null 2>&1; then
+    kind="local dev frontend (vite)"
+  else
+    kind="unknown process"
+  fi
+  case "$kind" in
+    *"dev backend"*|*"dev frontend"*)
+      bad "port $port ($label) is busy: $kind"
+      bad "  fix: make dev-stop   (or 'make up' does it automatically)"
+      ;;
+    *)
+      bad "port $port ($label) is busy: $kind"
+      bad "  fix: free the port, or set $label in .env (e.g. HTTP_PORT=8080)"
+      ;;
+  esac
 }
 check_port "${HTTP_PORT:-80}" HTTP_PORT
 check_port "${API_PORT:-8000}" API_PORT
