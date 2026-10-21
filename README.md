@@ -28,18 +28,21 @@ make up        # == docker compose up --build -d
 
 **Продакшен (без домена, доступ по IP):**
 
-1. Скопировать `backend/.env.example` → `backend/.env` и при необходимости
-   задать свои значения. Обязательно сменить `ADMIN_PASSWORD` до первого
-   старта:
+1. Подготовить файл настроек сервера (в корне репозитория, Docker читает его
+   автоматически):
    ```bash
-   cp backend/.env.example backend/.env
-   # vim/редактор: ADMIN_PASSWORD=..., при желании TELEGRAM_BOT_TOKEN=...
+   cp .env.example .env
+   # обязательно смените ADMIN_PASSWORD, при желании задайте TELEGRAM_BOT_TOKEN
    ```
-2.
+2. Проверить окружение (порты, версия compose, RAM, диск, сеть):
+   ```bash
+   make doctor
+   ```
+3. Запустить:
    ```bash
    docker compose up --build -d
    ```
-3. Открыть `http://<IP-сервера>/`.
+4. Открыть `http://<IP-сервера>/`.
 
 Полезное:
 
@@ -50,13 +53,44 @@ docker compose down            # остановить (данные в имен�
 docker compose up --build -d   # пересобрать и запустить после изменений
 ```
 
-Переменные для изменения портов: `HTTP_PORT` (по умолчанию `80`) и
-`API_PORT` (по умолчанию `8000`), пароль БД — `POSTGRES_PASSWORD`.
+Настройки сервера — в корневом `.env`: `HTTP_PORT` (по умолчанию `80`),
+`API_PORT` (`8000`), `POSTGRES_PASSWORD`, `ADMIN_USERNAME`/`ADMIN_PASSWORD`,
+`JWT_SECRET`, `TELEGRAM_BOT_TOKEN`, `CORS_ORIGINS`, `CLUB_TIMEZONE` и др.
+Файл `backend/.env` используется только для локальной разработки — Docker его
+не читает.
+
+`ADMIN_PASSWORD` из `.env` применяется **только при первой инициализации**
+(когда админа ещё нет). Поменять пароль позже:
+
+```bash
+# 1) вписать новый пароль в .env (ADMIN_PASSWORD=...)
+# 2) применить его
+make admin-password        # == docker compose exec backend python -m app.seed --reset-password
+```
 
 JWT-секрет: если `JWT_SECRET` пуст, он генерируется один раз и хранится на
 volume `backendsecrets` — токены админа переживают рестарт/пересборку. Данные
 БД — на volume `pgdata`. Удаление `docker compose down -v` сотрёт и секрет, и
 данные (потом нужен повторный логин).
+
+### Если что-то не запускается
+
+```bash
+make doctor        # диагностика окружения
+docker compose logs --tail=50 backend
+docker compose ps  # все сервисы должны быть Up (backend — healthy)
+```
+
+Частые причины:
+
+| Симптом | Причина | Решение |
+|---|---|---|
+| `port is already allocated` | порт 80/8000 занят | `HTTP_PORT=8080` в `.env` |
+| `docker compose: command not found` | нет плагина Compose v2 | `sudo apt-get install docker-compose-plugin` |
+| `services.backend.env_file must be a mapping` | слишком старый Compose | обновить Compose до v2.x |
+| `cannot build: out of memory` / OOM | < 1 ГБ RAM | добавить swap или уменьшить нагрузку |
+| `Seed complete` + `Application startup complete`, но сайт не открывается | закрыт firewall | `sudo ufw allow 80/tcp` |
+| забыл пароль админа | — | `docker compose exec backend python -m app.seed --reset-password` |
 
 ## Локальная разработка (без Docker)
 

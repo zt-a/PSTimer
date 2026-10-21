@@ -5,6 +5,11 @@
 #
 # Postgres is only reachable inside the compose network; the API is exposed
 # on API_PORT (8000) for direct/debug access.
+#
+# Per-server overrides go into a root `.env` file (auto-loaded by Compose):
+#   HTTP_PORT, API_PORT, POSTGRES_PASSWORD, ADMIN_USERNAME, ADMIN_PASSWORD,
+#   JWT_SECRET, TELEGRAM_BOT_TOKEN, CORS_ORIGINS, CLUB_TIMEZONE, ...
+# See .env.example for the full list.
 
 services:
   db:
@@ -28,12 +33,19 @@ services:
     container_name: pstimer-backend
     restart: unless-stopped
     env_file:
-      - path: backend/.env          # optional per-server overrides
-        required: false
-      - path: backend/.env.example  # sane defaults
-        required: true
+      - backend/.env.example
     environment:
       DATABASE_URL: postgresql+asyncpg://pstimer:${POSTGRES_PASSWORD:-pstimer}@db:5432/pstimer
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      JWT_SECRET: ${JWT_SECRET:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      APP_NAME: ${APP_NAME:-PlayStation Club}
+      CLUB_TIMEZONE: ${CLUB_TIMEZONE:-Asia/Bishkek}
+      HISTORY_RETENTION_DAYS: ${HISTORY_RETENTION_DAYS:-30}
+      CLEANUP_INTERVAL_HOURS: ${CLEANUP_INTERVAL_HOURS:-6}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-720}
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
@@ -76,12 +88,12 @@ services:
     container_name: pstimer-worker
     restart: unless-stopped
     env_file:
-      - path: backend/.env
-        required: false
-      - path: backend/.env.example
-        required: true
+      - backend/.env.example
     environment:
       DATABASE_URL: postgresql+asyncpg://pstimer:${POSTGRES_PASSWORD:-pstimer}@db:5432/pstimer
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      HISTORY_RETENTION_DAYS: ${HISTORY_RETENTION_DAYS:-30}
+      CLEANUP_INTERVAL_HOURS: ${CLEANUP_INTERVAL_HOURS:-6}
     volumes:
       - backendsecrets:/app/.secrets
     depends_on:

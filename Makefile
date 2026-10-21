@@ -1,4 +1,4 @@
-.PHONY: up down logs ps db-migrate db-revision backend frontend worker worker-once test
+.PHONY: up down logs ps restart doctor db-migrate db-revision admin-password backend frontend worker worker-once test
 
 # ── Docker (full stack) ──────────────────────────────────────────────
 up:
@@ -6,6 +6,13 @@ up:
 
 down:
 	docker compose down
+
+restart:
+	docker compose down && docker compose up -d --build
+
+# Pre-flight diagnostics (ports, compose version, RAM, disk, .env)
+doctor:
+	@bash scripts/doctor.sh
 
 logs:
 	docker compose logs -f --tail=100
@@ -19,6 +26,10 @@ db-migrate:
 
 db-revision:
 	docker compose exec backend alembic revision --autogenerate -m "$(m)"
+
+# Reset the admin password to ADMIN_PASSWORD from the root .env
+admin-password:
+	docker compose exec backend python -m app.seed --reset-password
 
 # ── Local (no Docker) ────────────────────────────────────────────────
 backend:
